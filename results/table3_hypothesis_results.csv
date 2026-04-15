@@ -1,0 +1,4 @@
+hypothesis,description,stat,ci_or_p,supported
+H1,EO increases inconsistency,+0.0814,"[0.0669, 0.0963]",True
+H2,Inconsistency concentrates near threshold,Spearman r=-0.4037,p=0.000000,True
+H3,Fairness-consistency tradeoff,See h3_pareto.csv / Fig 5,,Visual

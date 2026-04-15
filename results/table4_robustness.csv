@@ -1,0 +1,5 @@
+variant,h1_delta
+Primary (LR + Euclidean KNN),0.0813859790491539
+random_forest,0.0410958904109589
+cosine_similarity,0.07996702390766694
+cross_race,0.15485074626865672
