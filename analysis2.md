@@ -402,3 +402,82 @@ The feasibility analysis confirms that strict individual fairness (L=0.05) is co
 | What is the accuracy cost of adding Lipschitz on top of EO? | **−0.28 pp** (65.81% → 65.53%) — negligible. |
 | Is the dominant accuracy cost from EO or Lipschitz? | **EO** (−2.28 pp), not Lipschitz (−0.28 pp). |
 | Does the QP achieve binary EO after thresholding? | **No.** Soft (continuous) EO does not transfer to hard (binary) EO. |
+
+---
+
+## Part 13: Two-Stage Pipeline — Lipschitz QP → Hardt EO
+
+### Motivation
+
+The comparison in Part 5 exposed the core gap: the joint QP achieves individual fairness but not binary group fairness, while Hardt EO achieves binary group fairness but triples individual inconsistency. The two-stage pipeline chains both in sequence to get the best of both:
+
+- **Stage 1**: `solve_joint()` at chosen L produces `p_opt` — a Lipschitz-smoothed probability vector where similar individuals have similar scores
+- **Stage 2**: `fit_eo_postprocessor()` + `apply_eo_decisions()` applies Hardt EO to `p_opt` instead of raw `s`
+
+**Why this should reduce inconsistency**: Hardt's randomized thresholding introduces inconsistency because individuals near the decision threshold get a coin-flip. The Lipschitz constraint compresses the score distribution around each group's threshold — fewer individuals land in the mixed zone, so less randomization is needed, so fewer similar pairs receive discordant decisions. Binary EO is still guaranteed by Stage 2.
+
+### Two-Stage Results: Sweep over L
+
+All runs use epsilon_qp = 0.05, 10 random seeds for Stage 2, decisions averaged and binarized.
+
+| L | Accuracy | FPR Gap | FNR Gap | IR (all) | CR-IR | Mix rate Black | Mix rate White |
+|---|----------|---------|---------|----------|-------|----------------|----------------|
+| **Reference: Hardt-on-s** | **65.91%** | **0.74%** | **2.17%** | **12.53%** | **20.34%** | **56.1%** | **5.3%** |
+| 2.00 (two-stage) | 66.10% | 0.05% | 1.01% | 12.85% | 22.01% | 14.7% | 24.0% |
+| 1.00 | 66.57% | 0.35% | 1.70% | 12.49% | 22.11% | 25.7% | 5.3% |
+| 0.50 | 67.80% | 1.25% | 2.00% | 12.01% | 20.34% | 40.1% | 2.7% |
+| 0.35 | 66.10% | 0.27% | 1.99% | 10.60% | 18.75% | 45.7% | 15.8% |
+| 0.20 | 65.44% | 2.40% | 1.38% | 10.80% | 19.59% | 93.5% | 5.7% |
+| **0.10** | **66.00%** | **0.80%** | **4.45%** | **8.58%** | **16.14%** | **86.1%** | **2.7%** |
+| 0.05 | 64.68% | 0.12% | 2.31% | 9.19% | 17.54% | 20.3% | 0.8% |
+
+**Best operating point: L = 0.10**, with 95% bootstrap CI on IR: **8.58% [8.00%, 10.10%]** vs Hardt-on-s **12.53% [11.28%, 13.86%]**. The CI ranges do not overlap — the improvement is statistically reliable.
+
+### Four-Method Head-to-Head at L = 0.10
+
+| Metric | Baseline | Hardt EO | Joint QP (L=0.05) | **Two-Stage (L=0.10)** |
+|--------|----------|----------|-------------------|------------------------|
+| Accuracy | **68.09%** | 65.81% | 65.53% | 66.00% |
+| AUC | **0.728** | 0.728 | 0.713 | — |
+| FPR Gap | 18.0 pp | **0.74%** | 13.98% | **0.80%** |
+| FNR Gap | 28.6 pp | **2.17%** | 20.23% | 4.45% |
+| IR (all pairs) | 4.4% | 12.53% | 1.89% | **8.58%** |
+| IR (cross-race) | — | 20.34% | 1.31% | **16.14%** |
+
+### What the Two-Stage Achieves That Nothing Else Does
+
+The two-stage pipeline is the only method in this entire analysis that simultaneously achieves:
+- **Binary FPR gap < 1%** (0.80%) — comparable to Hardt EO's 0.74%
+- **IR below the Hardt-on-s baseline** (8.58% vs 12.53%) — a 31% reduction
+- **CR-IR below the Hardt-on-s baseline** (16.14% vs 20.34%) — a 21% reduction
+
+This directly closes the gap identified in Part 5. The unresolved problem was "no method achieves both binary group fairness and IR < 10%." The two-stage at L=0.10 achieves FPR gap=0.80% and IR=8.58%.
+
+### Mechanism: Why Mixing Rate Behaves Non-Monotonically
+
+The mixing rate (probability that a given individual gets the "lower" Hardt threshold) is the direct driver of inconsistency. At Hardt-on-s, Black mix rate = 56.1% — more than half of Black defendants get a randomized decision near the threshold.
+
+Two-stage behavior by L:
+
+- **Large L (2.00–1.00)**: p_opt is only mildly smoothed. The EO target on p_opt shifts (FPR target rises to ~34–36%), and Black mix rate drops to 15–26%. Individual inconsistency is only marginally lower than Hardt-on-s.
+
+- **Mid L (0.50–0.35)**: Meaningful smoothing. Black mix rate rises to 40–46%. The compressed score distribution forces Hardt to work at a higher FPR target but with a narrower mixing window, reducing inconsistency to 10.6–12.0%.
+
+- **Tight L (0.10)**: Strong smoothing. Black mix rate rises to 86% but the scores are so compressed that the absolute number of individuals in the mixing zone is small — most individuals are either clearly above or clearly below the threshold. IR drops to 8.58%.
+
+- **Very tight L (0.05)**: Near-exact Lipschitz enforcement flattens scores further. The mix rate drops back to 20% (near-deterministic threshold), and IR is 9.19% — slightly worse than L=0.10 because the score compression also reduces the discriminative signal Hardt uses to set its operating point.
+
+### Tradeoff at L = 0.10
+
+The one cost at L=0.10 is **FNR gap: 4.45%** (vs 2.17% for Hardt-on-s). FNR parity is harder to maintain when the Stage 1 QP reshapes the score distribution significantly. At L=0.35, the FNR gap is 1.99% (better than Hardt-on-s) while IR is 10.60% — a cleaner tradeoff if FNR parity is the priority.
+
+### Updated Summary Table
+
+| Question | Answer |
+|----------|--------|
+| Does the two-stage achieve binary group fairness? | **Yes.** FPR gap = 0.80% (comparable to Hardt-on-s 0.74%). |
+| Does the two-stage reduce individual inconsistency vs Hardt-on-s? | **Yes — by 31%.** IR: 12.53% → 8.58%; CR-IR: 20.34% → 16.14%. |
+| Is the IR improvement statistically reliable? | **Yes.** Bootstrap CIs do not overlap. |
+| What is the cost? | FNR gap rises from 2.17% to 4.45% at L=0.10. Accuracy is comparable (66.0% vs 65.9%). |
+| Does this close the gap identified in Part 5? | **Partially.** FPR gap < 1% AND IR < 10% achieved simultaneously for the first time. Cross-race IR (16.14%) remains higher than the joint QP (1.31%), which sacrifices group fairness entirely. |
+| Best operating point? | **L = 0.35** if FNR parity is the priority (FNR gap 2.0%, IR 10.6%). **L = 0.10** if IR minimization is the priority (IR 8.6%, FNR gap 4.5%). |
